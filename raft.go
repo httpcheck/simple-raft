@@ -135,12 +135,15 @@ func (rf *Raft) rpc(port string) {
 	}()
 }
 
-func (rf *Raft) start() {
+func (rf *Raft) start(initTime time.Duration) {
 	rf.state = Follower
 	rf.currentTerm = 0
 	rf.votedFor = -1
 	rf.heartbeatC = make(chan bool)
 	rf.toLeaderC = make(chan bool)
+
+	log.Printf("init node %d\n", rf.me)
+	time.Sleep(initTime * time.Second)
 
 	go func() {
 
@@ -224,7 +227,8 @@ func (rf *Raft) broadcastRequestVote() {
 func (rf *Raft) sendRequestVote(serverID int, args VoteArgs, reply *VoteReply) {
 	client, err := rpc.DialHTTP("tcp", rf.nodes[serverID].address)
 	if err != nil {
-		log.Fatal("dialing: ", err)
+		log.Println("request vote dialing: ", err)
+		return
 	}
 
 	defer client.Close()
@@ -240,9 +244,10 @@ func (rf *Raft) sendRequestVote(serverID int, args VoteArgs, reply *VoteReply) {
 
 	if reply.VoteGranted {
 		rf.voteCount++
-		if rf.voteCount > len(rf.nodes)/2+1 {
-			rf.toLeaderC <- true
-		}
+	}
+
+	if rf.voteCount >= len(rf.nodes)/2+1 {
+		rf.toLeaderC <- true
 	}
 }
 
@@ -283,7 +288,8 @@ func (rf *Raft) broadcastHeartbeat() {
 			args.PrevLogTerm = prevLogIndex
 			args.PrevLogTerm = rf.log[prevLogIndex].LogTerm
 			args.Entries = rf.log[prevLogIndex:]
-			log.Printf("send entries: %v\n", args.Entries)
+			lastEntry := args.Entries[len(args.Entries)-1]
+			log.Printf("send entries: LogTerm: %d, LogIndex: %d, LogCMD: %v\n", lastEntry.LogTerm, lastEntry.LogIndex, lastEntry.LogCMD)
 		}
 
 		go func(i int, args HeartbeatArgs) {
@@ -296,7 +302,8 @@ func (rf *Raft) broadcastHeartbeat() {
 func (rf *Raft) sendHeartbeat(serverID int, args HeartbeatArgs, reply *HeartbeatReply) {
 	client, err := rpc.DialHTTP("tcp", rf.nodes[serverID].address)
 	if err != nil {
-		log.Fatal("dialing:", err)
+		log.Println("heartbeat dialing:", err)
+		return
 	}
 
 	defer client.Close()
